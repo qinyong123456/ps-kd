@@ -400,4 +400,4 @@ def val(criterion_CE, net, epoch, val_loader, args):
             val_top5.update(err5.item(), inputs.size(0))
 
             progress_bar(epoch, batch_idx, len(val_loader), args,
-                         'val_loss'
+                         'val_loss')
