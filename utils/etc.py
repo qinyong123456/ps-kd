@@ -133,14 +133,37 @@ def paser_config_save(args,PATH):
     with open(PATH+'/'+'config.json', 'w') as f:
         json.dump(args.__dict__, f, indent=2)
 
-        
 def set_logging_defaults(logdir, args):
-    # set basic configuration for logging
-    logging.basicConfig(format="[%(asctime)s] [%(name)s] %(message)s",
-                        level=logging.INFO,
-                        handlers=[logging.FileHandler(os.path.join(logdir, 'log.txt')),
-                                  logging.StreamHandler(os.sys.stdout)])
-    # log cmdline argumetns
-    logger = logging.getLogger('main')
-    if is_main_process():
-        logger.info(args)
+    """Initialize logging with thread-safe and multi-process handling"""
+    if is_main_process():  # 只在主进程初始化日志
+        os.makedirs(logdir, exist_ok=True)  # 确保目录存在
+        
+        # 清空现有日志文件（避免追加）
+        log_file = os.path.join(logdir, 'log.txt')
+        open(log_file, 'w').close()
+        
+        # 重新配置logging（force=True覆盖旧配置）
+        logging.basicConfig(
+            format="[%(asctime)s] [%(name)s] %(message)s",
+            level=logging.INFO,
+            handlers=[
+                logging.FileHandler(log_file, mode='w'),  # 用覆写模式
+                logging.StreamHandler(sys.stdout)
+            ],
+            force=True  # 关键！确保每次调用都重新配置
+        )
+        
+        logger = logging.getLogger('main')
+        logger.info("Logging initialized successfully")
+        logger.info(f"Command line args: {args}")   
+        
+# def set_logging_defaults(logdir, args):
+#     # set basic configuration for logging
+#     logging.basicConfig(format="[%(asctime)s] [%(name)s] %(message)s",
+#                         level=logging.INFO,
+#                         handlers=[logging.FileHandler(os.path.join(logdir, 'log.txt')),
+#                                   logging.StreamHandler(os.sys.stdout)])
+#     # log cmdline argumetns
+#     logger = logging.getLogger('main')
+#     if is_main_process():
+#         logger.info(args)
