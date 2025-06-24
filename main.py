@@ -35,7 +35,7 @@ from utils.AverageMeter import AverageMeter
 from utils.metric import metric_ece_aurc_eaurc
 from utils.color import Colorer
 from utils.etc import progress_bar, is_main_process, save_on_master, paser_config_save, set_logging_defaults
-
+from utils.cutmix import cutmix
 
 
 #----------------------------------------------------
@@ -79,6 +79,7 @@ def parse_args():
                          'fastest way to use PyTorch for either single node or '
                          'multi node data parallel training')
     parser.add_argument('--resume', type=str, default=None, help='load model path')
+    parser.add_argument('--cutmix', action='store_true', help='Enable CutMix data augmentation')
 
     args = parser.parse_args()
     return check_args(args)
@@ -394,7 +395,6 @@ def train(all_predictions,
           train_loader,
           args):
     
-    
     train_top1 = AverageMeter()
     train_top5 = AverageMeter()
     train_losses = AverageMeter()
@@ -410,6 +410,13 @@ def train(all_predictions,
         if args.gpu is not None:
             inputs = inputs.cuda(non_blocking=True)
             targets = targets.cuda(non_blocking=True)
+            
+        #-----------------------------------
+        # CutMix 增强 (在PSKD之前应用)
+        #-----------------------------------
+        use_cutmix = args.cutmix and np.random.random() < args.cutmix_prob
+        if use_cutmix:
+            inputs, targets_a, targets_b, lam = cutmix(inputs, targets, alpha=args.cutmix_alpha)
             
         #-----------------------------------
         # Self-KD or none
@@ -430,7 +437,14 @@ def train(all_predictions,
             # compute output
             outputs = net(inputs)
             softmax_output = F.softmax(outputs, dim=1) 
-            loss = criterion_CE_pskd(outputs, soft_targets)
+            
+            # 使用CutMix时调整损失计算
+            if use_cutmix:
+                loss_a = criterion_CE_pskd(outputs, soft_targets[targets_a])
+                loss_b = criterion_CE_pskd(outputs, soft_targets[targets_b])
+                loss = lam * loss_a + (1 - lam) * loss_b
+            else:
+                loss = criterion_CE_pskd(outputs, soft_targets)
             
             if args.distributed:
                 gathered_prediction = [torch.ones_like(softmax_output) for _ in range(dist.get_world_size())]
@@ -443,7 +457,12 @@ def train(all_predictions,
 
         else:
             outputs = net(inputs)
-            loss = criterion_CE(outputs, targets)
+            
+            # 使用CutMix时调整损失计算
+            if use_cutmix:
+                loss = lam * criterion_CE(outputs, targets_a) + (1 - lam) * criterion_CE(outputs, targets_b)
+            else:
+                loss = criterion_CE(outputs, targets)
 
         train_losses.update(loss.item(), inputs.size(0))
         err1, err5 = accuracy(outputs.data, targets, topk=(1, 5))
@@ -457,7 +476,13 @@ def train(all_predictions,
 
         _, predicted = torch.max(outputs, 1)
         total += targets.size(0)
-        correct += predicted.eq(targets).sum().item()
+        
+        # 计算准确率时使用原始目标
+        if use_cutmix:
+            correct += (lam * predicted.eq(targets_a).sum().float() + 
+                       (1 - lam) * predicted.eq(targets_b).sum().float()).item()
+        else:
+            correct += predicted.eq(targets).sum().item()
         
         if args.PSKD:
             if args.distributed:
@@ -466,17 +491,22 @@ def train(all_predictions,
             else:
                 all_predictions[input_indices] = softmax_output.cpu().detach()
         
-        progress_bar(epoch,batch_idx, len(train_loader), args, 'lr: {:.1e} | alpha_t: {:.3f} | loss: {:.3f} | top1_acc: {:.3f} | top5_acc: {:.3f} | correct/total({}/{})'.format(
-            current_LR, alpha_t, train_losses.avg, train_top1.avg, train_top5.avg, correct, total))
+        progress_bar(epoch, batch_idx, len(train_loader), args, 
+                    f'lr: {current_LR:.1e} | alpha_t: {alpha_t:.3f} | '
+                    f'loss: {train_losses.avg:.3f} | top1_acc: {train_top1.avg:.3f} | '
+                    f'top5_acc: {train_top5.avg:.3f} | correct/total({correct}/{total})')
 
     if args.distributed:
         dist.barrier()
     
     logger = logging.getLogger('train')
-    logger.info('[Rank {}] [Epoch {}] [PSKD {}] [lr {:.1e}] [alpht_t {:.3f}] [train_loss {:.3f}] [train_top1_acc {:.3f}] [train_top5_acc {:.3f}] [correct/total {}/{}]'.format(
+    logger.info('[Rank {}] [Epoch {}] [PSKD {}] [CutMix {}] [lr {:.1e}] [alpht_t {:.3f}] '
+                '[train_loss {:.3f}] [train_top1_acc {:.3f}] [train_top5_acc {:.3f}] '
+                '[correct/total {}/{}]'.format(
         args.rank,
         epoch,
         args.PSKD,
+        use_cutmix,
         current_LR,
         alpha_t,
         train_losses.avg,
@@ -486,7 +516,6 @@ def train(all_predictions,
         total))
     
     return all_predictions
-
 
 #-------------------------------          
 # Validation
