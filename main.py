@@ -38,6 +38,7 @@ from utils.etc import progress_bar, is_main_process, save_on_master, paser_confi
 from utils.cutmix import cutmix
 
 
+
 #----------------------------------------------------
 #  Etc
 #----------------------------------------------------
@@ -80,6 +81,8 @@ def parse_args():
                          'multi node data parallel training')
     parser.add_argument('--resume', type=str, default=None, help='load model path')
     parser.add_argument('--cutmix', action='store_true', help='Enable CutMix data augmentation')
+    parser.add_argument('--cutmix_alpha', type=float, default=1.0, help='CutMix alpha parameter')
+    parser.add_argument('--cutmix_prob', type=float, default=0.5, help='Probability of using CutMix')
 
     args = parser.parse_args()
     return check_args(args)
