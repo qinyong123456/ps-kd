@@ -12,20 +12,30 @@ def rand_bbox(size, lam):
     H = size[3]
     cut_rat = np.sqrt(1. - lam)
     
-    # 修复：使用 int 替代 np.int
-    cut_w = int(W * cut_rat)
-    cut_h = int(H * cut_rat)
-
+    # 确保裁剪尺寸至少为1，避免生成无效的裁剪框
+    cut_w = max(1, int(W * cut_rat))
+    cut_h = max(1, int(H * cut_rat))
+    
+    # 确保中心点不会导致裁剪框超出边界，并且有足够的空间
+    cx_min = cut_w // 2
+    cx_max = W - (cut_w // 2) - 1
+    cy_min = cut_h // 2
+    cy_max = H - (cut_h // 2) - 1
+    
     # 随机选择裁剪区域的中心
-    cx = np.random.randint(W)
-    cy = np.random.randint(H)
+    cx = np.random.randint(cx_min, cx_max + 1)
+    cy = np.random.randint(cy_min, cy_max + 1)
 
     # 计算裁剪区域的边界
-    bbx1 = np.clip(cx - cut_w // 2, 0, W)
-    bby1 = np.clip(cy - cut_h // 2, 0, H)
-    bbx2 = np.clip(cx + cut_w // 2, 0, W)
-    bby2 = np.clip(cy + cut_h // 2, 0, H)
-
+    bbx1 = cx - cut_w // 2
+    bby1 = cy - cut_h // 2
+    bbx2 = cx + cut_w // 2
+    bby2 = cy + cut_h // 2
+    
+    # 确保边界有效性
+    assert bbx1 < bbx2, f"bbx1={bbx1}, bbx2={bbx2}, cut_w={cut_w}, cx={cx}"
+    assert bby1 < bby2, f"bby1={bby1}, bby2={bby2}, cut_h={cut_h}, cy={cy}"
+    
     return bbx1, bby1, bbx2, bby2
 
 def cutmix(data, targets, alpha=1.0):
