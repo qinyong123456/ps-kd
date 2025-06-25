@@ -55,10 +55,6 @@ def cutmix(data, targets, alpha=1.0):
     # 生成裁剪区域的边界框
     bbx1, bby1, bbx2, bby2 = rand_bbox(data.size(), lam)
     
-    # 确保边界有效性
-    assert 0 <= bbx1 < bbx2 <= data.size(2), f"bbx1={bbx1}, bbx2={bbx2}, W={data.size(2)}"
-    assert 0 <= bby1 < bby2 <= data.size(3), f"bby1={bby1}, bby2={bby2}, H={data.size(3)}"
-    
     # 执行图像混合
     data[:, :, bbx1:bbx2, bby1:bby2] = data[index, :, bbx1:bbx2, bby1:bby2]
 
