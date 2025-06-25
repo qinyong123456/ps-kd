@@ -410,12 +410,26 @@ def train(all_predictions,
     
     # 获取类别数量，用于索引检查
     num_classes = len(train_loader.dataset.classes)
+    print(f"类别数量: {num_classes}")
+    
+    # 检查预测缓存大小是否正确
+    print(f"预测缓存大小: {len(all_predictions)}")
+    print(f"训练集大小: {len(train_loader.dataset)}")
+    
+    if len(all_predictions) != len(train_loader.dataset):
+        print(f"警告: 预测缓存大小({len(all_predictions)})与训练集大小({len(train_loader.dataset)})不匹配")
+        # 重新初始化预测缓存
+        all_predictions = torch.zeros(len(train_loader.dataset), num_classes)
 
     for batch_idx, (inputs, targets, input_indices) in enumerate(train_loader):
         
         if args.gpu is not None:
             inputs = inputs.cuda(non_blocking=True)
             targets = targets.cuda(non_blocking=True)
+            
+        # 验证输入索引
+        assert torch.all(input_indices < len(all_predictions)), \
+            f"输入索引越界: 最大值 {input_indices.max().item()} >= 缓存大小 {len(all_predictions)}"
             
         #-----------------------------------
         # CutMix 增强 (在PSKD之前应用)
@@ -425,8 +439,10 @@ def train(all_predictions,
             inputs, targets_a, targets_b, lam = cutmix(inputs, targets, alpha=args.cutmix_alpha)
             
             # 确保标签索引有效
-            assert torch.all(targets_a < num_classes), f"Invalid target_a: {targets_a}"
-            assert torch.all(targets_b < num_classes), f"Invalid target_b: {targets_b}"
+            assert torch.all(targets_a < num_classes), \
+                f"无效的targets_a: 最大值 {targets_a.max().item()} >= 类别数 {num_classes}"
+            assert torch.all(targets_b < num_classes), \
+                f"无效的targets_b: 最大值 {targets_b.max().item()} >= 类别数 {num_classes}"
             
         #-----------------------------------
         # Self-KD or none
@@ -436,13 +452,15 @@ def train(all_predictions,
             identity_matrix = torch.eye(num_classes)  # 使用已知的类别数量
             
             # 确保目标标签索引有效
-            assert np.all(targets_numpy < num_classes), f"Invalid targets: {targets_numpy}"
+            assert np.all(targets_numpy < num_classes), \
+                f"无效的targets: 最大值 {targets_numpy.max()} >= 类别数 {num_classes}"
             
             targets_one_hot = identity_matrix[targets_numpy]
             
             if epoch == 0:
                 # 确保输入索引有效
-                assert torch.all(input_indices < len(all_predictions)), f"Invalid input_indices: {input_indices}"
+                assert torch.all(input_indices < len(all_predictions)), \
+                    f"输入索引越界: 最大值 {input_indices.max().item()} >= 缓存大小 {len(all_predictions)}"
                 all_predictions[input_indices] = targets_one_hot
 
             # create new soft-targets
@@ -456,12 +474,9 @@ def train(all_predictions,
             
             # 使用CutMix时调整损失计算
             if use_cutmix:
-                # 确保目标索引有效
-                assert torch.all(targets_a < num_classes), f"Invalid targets_a: {targets_a}"
-                assert torch.all(targets_b < num_classes), f"Invalid targets_b: {targets_b}"
-                
-                loss_a = criterion_CE_pskd(outputs, soft_targets[targets_a])
-                loss_b = criterion_CE_pskd(outputs, soft_targets[targets_b])
+                # 使用原始目标生成soft-targets，避免索引越界
+                loss_a = criterion_CE_pskd(outputs, soft_targets)
+                loss_b = criterion_CE_pskd(outputs, soft_targets[index])
                 loss = lam * loss_a + (1 - lam) * loss_b
             else:
                 loss = criterion_CE_pskd(outputs, soft_targets)
@@ -476,7 +491,8 @@ def train(all_predictions,
                 gathered_indices = torch.cat(gathered_indices, dim=0)
                 
                 # 确保gathered_indices有效
-                assert torch.all(gathered_indices < len(all_predictions)), f"Invalid gathered_indices: {gathered_indices}"
+                assert torch.all(gathered_indices < len(all_predictions)), \
+                    f"gathered_indices越界: 最大值 {gathered_indices.max().item()} >= 缓存大小 {len(all_predictions)}"
 
         else:
             outputs = net(inputs)
@@ -512,11 +528,13 @@ def train(all_predictions,
                 for jdx in range(len(gathered_prediction)):
                     # 再次确保索引有效
                     idx = gathered_indices[jdx].item()
-                    assert idx < len(all_predictions), f"Invalid index: {idx}"
+                    assert idx < len(all_predictions), \
+                        f"索引越界: {idx} >= 缓存大小 {len(all_predictions)}"
                     all_predictions[idx] = gathered_prediction[jdx].detach()
             else:
                 # 确保输入索引有效
-                assert torch.all(input_indices < len(all_predictions)), f"Invalid input_indices: {input_indices}"
+                assert torch.all(input_indices < len(all_predictions)), \
+                    f"输入索引越界: 最大值 {input_indices.max().item()} >= 缓存大小 {len(all_predictions)}"
                 all_predictions[input_indices] = softmax_output.cpu().detach()
         
         progress_bar(epoch, batch_idx, len(train_loader), args, 
