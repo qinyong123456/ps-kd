@@ -407,6 +407,9 @@ def train(all_predictions,
 
     net.train()
     current_LR = get_learning_rate(optimizer)[0]
+    
+    # 获取类别数量，用于索引检查
+    num_classes = len(train_loader.dataset.classes)
 
     for batch_idx, (inputs, targets, input_indices) in enumerate(train_loader):
         
@@ -421,15 +424,25 @@ def train(all_predictions,
         if use_cutmix:
             inputs, targets_a, targets_b, lam = cutmix(inputs, targets, alpha=args.cutmix_alpha)
             
+            # 确保标签索引有效
+            assert torch.all(targets_a < num_classes), f"Invalid target_a: {targets_a}"
+            assert torch.all(targets_b < num_classes), f"Invalid target_b: {targets_b}"
+            
         #-----------------------------------
         # Self-KD or none
         #-----------------------------------                
         if args.PSKD:
             targets_numpy = targets.cpu().detach().numpy()
-            identity_matrix = torch.eye(len(train_loader.dataset.classes)) 
+            identity_matrix = torch.eye(num_classes)  # 使用已知的类别数量
+            
+            # 确保目标标签索引有效
+            assert np.all(targets_numpy < num_classes), f"Invalid targets: {targets_numpy}"
+            
             targets_one_hot = identity_matrix[targets_numpy]
             
             if epoch == 0:
+                # 确保输入索引有效
+                assert torch.all(input_indices < len(all_predictions)), f"Invalid input_indices: {input_indices}"
                 all_predictions[input_indices] = targets_one_hot
 
             # create new soft-targets
@@ -443,6 +456,10 @@ def train(all_predictions,
             
             # 使用CutMix时调整损失计算
             if use_cutmix:
+                # 确保目标索引有效
+                assert torch.all(targets_a < num_classes), f"Invalid targets_a: {targets_a}"
+                assert torch.all(targets_b < num_classes), f"Invalid targets_b: {targets_b}"
+                
                 loss_a = criterion_CE_pskd(outputs, soft_targets[targets_a])
                 loss_b = criterion_CE_pskd(outputs, soft_targets[targets_b])
                 loss = lam * loss_a + (1 - lam) * loss_b
@@ -457,6 +474,9 @@ def train(all_predictions,
                 gathered_indices = [torch.ones_like(input_indices.cuda()) for _ in range(dist.get_world_size())]
                 dist.all_gather(gathered_indices, input_indices.cuda())
                 gathered_indices = torch.cat(gathered_indices, dim=0)
+                
+                # 确保gathered_indices有效
+                assert torch.all(gathered_indices < len(all_predictions)), f"Invalid gathered_indices: {gathered_indices}"
 
         else:
             outputs = net(inputs)
@@ -490,8 +510,13 @@ def train(all_predictions,
         if args.PSKD:
             if args.distributed:
                 for jdx in range(len(gathered_prediction)):
-                    all_predictions[gathered_indices[jdx]] = gathered_prediction[jdx].detach()
+                    # 再次确保索引有效
+                    idx = gathered_indices[jdx].item()
+                    assert idx < len(all_predictions), f"Invalid index: {idx}"
+                    all_predictions[idx] = gathered_prediction[jdx].detach()
             else:
+                # 确保输入索引有效
+                assert torch.all(input_indices < len(all_predictions)), f"Invalid input_indices: {input_indices}"
                 all_predictions[input_indices] = softmax_output.cpu().detach()
         
         progress_bar(epoch, batch_idx, len(train_loader), args, 
