@@ -437,6 +437,8 @@ def train(all_predictions,
         use_cutmix = args.cutmix and np.random.random() < args.cutmix_prob
         if use_cutmix:
             inputs, targets_a, targets_b, lam = cutmix(inputs, targets, alpha=args.cutmix_alpha)
+            # 保存用于打乱样本的索引，用于PSKD中的soft-targets索引
+            index = torch.randperm(inputs.size(0)).to(inputs.device)
             
             # 确保标签索引有效
             assert torch.all(targets_a < num_classes), \
@@ -474,7 +476,7 @@ def train(all_predictions,
             
             # 使用CutMix时调整损失计算
             if use_cutmix:
-                # 使用原始目标生成soft-targets，避免索引越界
+                # 使用保存的index变量来索引soft-targets
                 loss_a = criterion_CE_pskd(outputs, soft_targets)
                 loss_b = criterion_CE_pskd(outputs, soft_targets[index])
                 loss = lam * loss_a + (1 - lam) * loss_b
