@@ -1,5 +1,33 @@
 import torch
 import numpy as np
+
+def rand_bbox(size, lam):
+    """
+    生成裁剪区域的边界框
+    :param size: 图像的尺寸 (batch_size, channels, height, width)
+    :param lam: 裁剪比例
+    :return: 裁剪区域的边界框坐标
+    """
+    W = size[2]
+    H = size[3]
+    cut_rat = np.sqrt(1. - lam)
+    
+    # 修复：使用 int 替代 np.int
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
+
+    # 随机选择裁剪区域的中心
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    # 计算裁剪区域的边界
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+
 def cutmix(data, targets, alpha=1.0):
     """
     实现 CutMix 数据增强
@@ -16,7 +44,7 @@ def cutmix(data, targets, alpha=1.0):
     # 生成裁剪区域的边界框
     bbx1, bby1, bbx2, bby2 = rand_bbox(data.size(), lam)
     
-    # 修正变量名拼写错误
+    # 确保边界有效性
     assert 0 <= bbx1 < bbx2 <= data.size(2), f"bbx1={bbx1}, bbx2={bbx2}, W={data.size(2)}"
     assert 0 <= bby1 < bby2 <= data.size(3), f"bby1={bby1}, bby2={bby2}, H={data.size(3)}"
     
@@ -24,7 +52,7 @@ def cutmix(data, targets, alpha=1.0):
     data[:, :, bbx1:bbx2, bby1:bby2] = data[index, :, bbx1:bbx2, bby1:bby2]
 
     # 调整裁剪比例以考虑实际裁剪区域
-    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (data.size(-1) * data.size(-2)))
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (data.size()[-1] * data.size()[-2]))
 
     # 调整标签
     targets_a = targets
