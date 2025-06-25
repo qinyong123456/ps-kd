@@ -1,3 +1,5 @@
+import torch
+import numpy as np
 def cutmix(data, targets, alpha=1.0):
     """
     实现 CutMix 数据增强
