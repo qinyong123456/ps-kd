@@ -84,6 +84,11 @@ def parse_args():
     parser.add_argument('--cutmix_alpha', type=float, default=1.0, help='CutMix alpha parameter')
     parser.add_argument('--cutmix_prob', type=float, default=0.5, help='Probability of using CutMix')
 
+    parser.add_argument('--cutout', action='store_true', help='Enable Cutout augmentation')
+    parser.add_argument('--cutout_holes', type=int, default=1, help='Number of Cutout holes')
+    parser.add_argument('--cutout_length', type=int, default=16, help='Cutout hole length')
+    parser.add_argument('--cutout_fill', type=float, default=0.0, help='Cutout fill value (0 for black, use mean for better results)')
+
     args = parser.parse_args()
     return check_args(args)
 
