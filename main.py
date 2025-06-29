@@ -320,75 +320,101 @@ def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
     cudnn.benchmark = True
 
     for epoch in range(args.start_epoch, args.end_epoch):
-
+        # 调整学习率
         adjust_learning_rate(optimizer, epoch, args)
+        
         if args.distributed:
             train_sampler.set_epoch(epoch)
-            
-            
+        
+        # PSKD模式下更新alpha_t
         if args.PSKD:
-            #---------------------------------------------------
-            #  Alpha_t update
-            #---------------------------------------------------
             alpha_t = args.alpha_T * ((epoch + 1) / args.end_epoch)
             alpha_t = max(0, alpha_t)
+            print(f"[!] PSKD模式: alpha_t = {alpha_t:.3f}")
         else:
             alpha_t = -1
-        #---------------------------------------------------
-        #  Train
-        #---------------------------------------------------
-        all_predictions = train(
-                                all_predictions,
-                                criterion_CE,
-                                criterion_CE_pskd,
-                                optimizer,
-                                net,
-                                epoch,
-                                alpha_t,
-                                train_loader,
-                                args)
-
+            print("[!] 非PSKD模式，alpha_t = -1")
+        
+        # 执行训练
+        if args.PSKD:
+            # 确保all_predictions已初始化
+            if all_predictions is None:
+                train_dataset_size = len(train_loader.dataset)
+                num_classes = len(train_loader.dataset.classes)
+                all_predictions = torch.zeros(train_dataset_size, num_classes)
+                print(f"[!] 初始化预测缓存: {train_dataset_size}x{num_classes}")
+            
+            all_predictions = train(
+                all_predictions,
+                criterion_CE,
+                criterion_CE_pskd,
+                optimizer,
+                net,
+                epoch,
+                alpha_t,
+                train_loader,
+                args
+            )
+        else:
+            # 非PSKD模式下传递None，并忽略返回值
+            train(
+                None,
+                criterion_CE,
+                criterion_CE_pskd,
+                optimizer,
+                net,
+                epoch,
+                alpha_t,
+                train_loader,
+                args
+            )
+            all_predictions = None  # 确保非PSKD模式下all_predictions为None
+        
         if args.distributed:
             dist.barrier()
-        #---------------------------------------------------
-        #  Validation
-        #---------------------------------------------------
+        
+        # 执行验证
         acc = val(
-                  criterion_CE,
-                  net,
-                  epoch,
-                  valid_loader,
-                  args)
-
-        #---------------------------------------------------
-        #  Save_dict for saving model
-        #---------------------------------------------------
+            criterion_CE,
+            net,
+            epoch,
+            valid_loader,
+            args
+        )
+        
+        # 准备保存字典
         save_dict = {
-                    'net': net.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'epoch': epoch,
-                    'best_acc' : best_acc,
-                    'accuracy' : acc,
-                    'alpha_t' : alpha_t,
-                    'prev_predictions': all_predictions
-                    }
-
+            'net': net.state_dict(),
+            'optimizer': optimizer.state_dict(),
+            'epoch': epoch,
+            'best_acc': best_acc,
+            'accuracy': acc,
+            'alpha_t': alpha_t,
+        }
+        
+        # 仅在PSKD模式下保存预测缓存
+        if args.PSKD:
+            save_dict['prev_predictions'] = all_predictions.cpu()  # 移至CPU再保存
+        else:
+            save_dict['prev_predictions'] = None  # 非PSKD模式下保存为None
+        
+        # 保存最佳检查点
         if acc > best_acc:
             best_acc = acc
-            save_on_master(save_dict,os.path.join(model_dir, 'checkpoint_best.pth'))
+            save_on_master(save_dict, os.path.join(model_dir, 'checkpoint_best.pth'))
             if is_main_process():
-                print(C.green("[!] Save best checkpoint."))
-
+                print(C.green("[!] 保存最佳检查点."))
+        
+        # 按频率保存检查点
         if args.saveckp_freq and (epoch + 1) % args.saveckp_freq == 0:
-            save_on_master(save_dict,os.path.join(model_dir, f'checkpoint_{epoch:03}.pth'))
+            save_on_master(save_dict, os.path.join(model_dir, f'checkpoint_{epoch:03}.pth'))
             if is_main_process():
-                print(C.green("[!] Save checkpoint."))
+                print(C.green("[!] 保存检查点."))
 
-    if args.distributed:
-        dist.barrier()
-        dist.destroy_process_group()
-        print(C.green("[!] [Rank {}] Distroy Distributed process".format(args.rank)))
-
+if args.distributed:
+    dist.barrier()
+    dist.destroy_process_group()
+    print(C.green(f"[!] [Rank {args.rank}] 销毁分布式进程."))
 
 
 #-------------------------------
@@ -413,32 +439,35 @@ def train(all_predictions,
 
     net.train()
     current_LR = get_learning_rate(optimizer)[0]
+    
     # 获取类别数量
     num_classes = len(train_loader.dataset.classes)
     
-    
-    # 获取类别数量，用于索引检查
-    num_classes = len(train_loader.dataset.classes)
-    print(f"类别数量: {num_classes}")
-    
-    # 检查预测缓存大小是否正确
-    print(f"预测缓存大小: {len(all_predictions)}")
-    print(f"训练集大小: {len(train_loader.dataset)}")
-    
-    if len(all_predictions) != len(train_loader.dataset):
-        print(f"警告: 预测缓存大小({len(all_predictions)})与训练集大小({len(train_loader.dataset)})不匹配")
-        # 重新初始化预测缓存
-        all_predictions = torch.zeros(len(train_loader.dataset), num_classes)
+    # 仅在PSKD模式下处理预测缓存
+    if args.PSKD:
+        print(f"类别数量: {num_classes}")
+        
+        # 检查预测缓存是否已初始化
+        if all_predictions is None:
+            train_dataset_size = len(train_loader.dataset)
+            all_predictions = torch.zeros(train_dataset_size, num_classes)
+            print(f"[!] 在train函数中初始化预测缓存: 大小 {train_dataset_size}x{num_classes}")
+        
+        print(f"预测缓存大小: {len(all_predictions)}")
+        print(f"训练集大小: {len(train_loader.dataset)}")
+        
+        # 确保预测缓存大小与训练集一致
+        if len(all_predictions) != len(train_loader.dataset):
+            print(f"警告: 预测缓存大小({len(all_predictions)})与训练集大小({len(train_loader.dataset)})不匹配，重新初始化")
+            all_predictions = torch.zeros(len(train_loader.dataset), num_classes)
+    else:
+        print("[!] 非PSKD模式，不使用预测缓存")
 
     for batch_idx, (inputs, targets, input_indices) in enumerate(train_loader):
         
         if args.gpu is not None:
             inputs = inputs.cuda(non_blocking=True)
             targets = targets.cuda(non_blocking=True)
-            
-        # 验证输入索引
-        assert torch.all(input_indices < len(all_predictions)), \
-            f"输入索引越界: 最大值 {input_indices.max().item()} >= 缓存大小 {len(all_predictions)}"
             
         #-----------------------------------
         # CutMix 增强 (在PSKD之前应用)
@@ -459,6 +488,10 @@ def train(all_predictions,
         # Self-KD or none
         #-----------------------------------                
         if args.PSKD:
+            # 验证输入索引
+            assert torch.all(input_indices < len(all_predictions)), \
+                f"输入索引越界: 最大值 {input_indices.max().item()} >= 缓存大小 {len(all_predictions)}"
+                
             targets_numpy = targets.cpu().detach().numpy()
             identity_matrix = torch.eye(num_classes)  # 使用已知的类别数量
             
@@ -572,7 +605,8 @@ def train(all_predictions,
         correct,
         total))
     
-    return all_predictions
+    # 仅在PSKD模式下返回预测缓存
+    return all_predictions if args.PSKD else None
 
 #-------------------------------          
 # Validation
