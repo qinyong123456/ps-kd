@@ -23,29 +23,43 @@ import os
 from loader import custom_datasets
 from utils import custom_transform
 from utils.color import Colorer
+from utils.cutout import Cutout  # 已导入Cutout类
 
 C = Colorer.instance()
 
 def dataloader(args):
     if args.data_type == 'cifar10':
         
-        mean= [x / 255.0 for x in [125.3, 123.0, 113.9]]
+        mean = [x / 255.0 for x in [125.3, 123.0, 113.9]]
         stdv = [x / 255.0 for x in [63.0, 62.1, 66.7]]
         
         print(C.green("[!] [Rank {}] Preparing {} data..".format(args.rank, args.data_type)))
-        transform_train = transforms.Compose([
-                                                                               
-                                              transforms.RandomCrop(32, padding=4),
-                                              transforms.RandomHorizontalFlip(),
-                                              transforms.ToTensor(),
-                                              transforms.Normalize(mean=mean, std=stdv),
-                                             ])
+        
+        # 定义基础转换流程
+        transform_train_list = [
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=stdv),
+        ]
+        
+        # 添加Cutout到转换流程
+        if args.cutout:
+            # 创建Cutout实例并设置参数
+            cutout = Cutout(
+                n_holes=args.cutout_holes,
+                length=args.cutout_length,
+                fill_value=args.cutout_fill
+            )
+            # 将Cutout插入到归一化之前
+            transform_train_list.insert(-1, cutout)
+        
+        transform_train = transforms.Compose(transform_train_list)
 
         transform_val = transforms.Compose([
-                                                                             
-                                              transforms.ToTensor(),
-                                              transforms.Normalize(mean=mean, std=stdv),
-                                           ])
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=stdv),
+        ])
         
         trainset = custom_datasets.Custom_CIFAR10(root=args.data_path, train=True, download=True, transform=transform_train)
         validset = custom_datasets.Custom_CIFAR10(root=args.data_path, train=False, download=True, transform=transform_val)
@@ -76,20 +90,29 @@ def dataloader(args):
         
         print(C.green("[!] [Rank {}] Preparing {} data..".format(args.rank, args.data_type)))
         
-        transform_train = transforms.Compose([
-                                                                               
-                                              transforms.RandomCrop(32, padding=4),
-                                              transforms.RandomHorizontalFlip(),
-                                              transforms.ToTensor(),
-                                              transforms.Normalize(mean=mean, std=stdv),
-                                             ])
+        # 定义基础转换流程
+        transform_train_list = [
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=stdv),
+        ]
         
+        # 添加Cutout到转换流程
+        if args.cutout:
+            cutout = Cutout(
+                n_holes=args.cutout_holes,
+                length=args.cutout_length,
+                fill_value=args.cutout_fill
+            )
+            transform_train_list.insert(-1, cutout)
+        
+        transform_train = transforms.Compose(transform_train_list)
 
         transform_val = transforms.Compose([
-                                                                             
-                                              transforms.ToTensor(),
-                                              transforms.Normalize(mean=mean, std=stdv),
-                                           ])
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=stdv),
+        ])
         
         trainset = custom_datasets.Custom_CIFAR100(root=args.data_path, train=True, download=True, transform=transform_train)
         validset = custom_datasets.Custom_CIFAR100(root=args.data_path, train=False, download=True, transform=transform_val)
@@ -114,8 +137,8 @@ def dataloader(args):
                                                    num_workers=args.workers)
     
     elif args.data_type == 'imagenet':
-        mean=[0.485, 0.456, 0.406]
-        stdv=[0.229, 0.224, 0.225]
+        mean = [0.485, 0.456, 0.406]
+        stdv = [0.229, 0.224, 0.225]
         print(C.green("[!] [Rank {}] Preparing {} data..".format(args.rank, args.data_type)))
         jittering = custom_transform.ColorJitter(brightness=0.4, contrast=0.4, saturation=0.4)
         lighting = custom_transform.Lighting(alphastd=0.1,
@@ -124,21 +147,33 @@ def dataloader(args):
                                                      [-0.5808, -0.0045, -0.8140],
                                                      [-0.5836, -0.6948, 0.4203]])
         
-        transform_train = transforms.Compose([
-                                              transforms.RandomResizedCrop(224),
-                                              transforms.RandomHorizontalFlip(),
-                                              transforms.ToTensor(),
-                                              jittering,
-                                              lighting,
-                                              transforms.Normalize(mean=mean, std=stdv),
-                                             ])
+        # 定义基础转换流程
+        transform_train_list = [
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            jittering,
+            lighting,
+            transforms.Normalize(mean=mean, std=stdv),
+        ]
         
+        # 添加Cutout到转换流程（ImageNet建议更大的length）
+        if args.cutout:
+            cutout = Cutout(
+                n_holes=args.cutout_holes,
+                length=args.cutout_length,
+                fill_value=args.cutout_fill
+            )
+            transform_train_list.insert(-1, cutout)
+        
+        transform_train = transforms.Compose(transform_train_list)
+
         transform_val = transforms.Compose([
-                                            transforms.Resize(256),
-                                            transforms.CenterCrop(224),
-                                            transforms.ToTensor(),
-                                            transforms.Normalize(mean=mean, std=stdv),
-                                          ])
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=stdv),
+        ])
         
         trainset = custom_datasets.Custom_ImageFolder(os.path.join(args.data_path,'train'), transform=transform_train)
         validset = custom_datasets.Custom_ImageFolder(os.path.join(args.data_path,'val'), transform=transform_val)
@@ -167,5 +202,4 @@ def dataloader(args):
     else:
         raise Exception("[!] There is no option for Datatype")    
         
-    return train_loader,valid_loader,train_sampler
-
+    return train_loader, valid_loader, train_sampler
