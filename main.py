@@ -411,10 +411,10 @@ def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
             if is_main_process():
                 print(C.green("[!] 保存检查点."))
 
-if args.distributed:
-    dist.barrier()
-    dist.destroy_process_group()
-    print(C.green(f"[!] [Rank {args.rank}] 销毁分布式进程."))
+        if args.distributed:
+            dist.barrier()
+            dist.destroy_process_group()
+            print(C.green(f"[!] [Rank {args.rank}] 销毁分布式进程."))
 
 
 #-------------------------------
