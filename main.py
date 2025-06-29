@@ -218,6 +218,17 @@ def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
     args.gpu = gpu
     if args.gpu is not None:
         print(C.underline(C.yellow("[Info] Use GPU : {} for training".format(args.gpu))))
+    # 初始化PSKD所需的预测缓存
+    if args.PSKD:
+        # 获取训练集大小
+        train_dataset_size = len(train_loader.dataset)
+        num_classes = len(train_loader.dataset.classes)
+        
+        # 初始化all_predictions张量
+        all_predictions = torch.zeros(train_dataset_size, num_classes)
+        print(f"[!] 初始化PSKD预测缓存: 大小 {train_dataset_size}x{num_classes}")
+    else:
+        all_predictions = None
     
     if args.distributed:
         if args.multiprocessing_distributed:
@@ -324,7 +335,33 @@ def main_worker(gpu, ngpus_per_node, model_dir, log_dir, args):
         adjust_learning_rate(optimizer, epoch, args)
         if args.distributed:
             train_sampler.set_epoch(epoch)
-
+            
+        # 调用train函数并传递all_predictions
+        if args.PSKD:
+            all_predictions = train(
+                all_predictions,
+                criterion_CE,
+                criterion_CE_pskd,
+                optimizer,
+                model,
+                epoch,
+                alpha_t,
+                train_loader,
+                args
+            )
+        else:
+            train(
+                None,  # 非PSKD模式下all_predictions为None
+                criterion_CE,
+                criterion_CE_pskd,
+                optimizer,
+                model,
+                epoch,
+                alpha_t,
+                train_loader,
+                args
+            )
+            
         if args.PSKD:
             #---------------------------------------------------
             #  Alpha_t update
@@ -412,6 +449,29 @@ def train(all_predictions,
 
     net.train()
     current_LR = get_learning_rate(optimizer)[0]
+    # 获取类别数量
+    num_classes = len(train_loader.dataset.classes)
+    
+    # 仅在PSKD模式下初始化预测缓存
+    if args.PSKD:
+        print(f"类别数量: {num_classes}")
+        
+        # 检查预测缓存是否已初始化
+        if all_predictions is None:
+            train_dataset_size = len(train_loader.dataset)
+            all_predictions = torch.zeros(train_dataset_size, num_classes)
+            print(f"[!] 在train函数中初始化预测缓存: 大小 {train_dataset_size}x{num_classes}")
+        
+        print(f"预测缓存大小: {len(all_predictions)}")
+        print(f"训练集大小: {len(train_loader.dataset)}")
+        
+        # 确保预测缓存大小与训练集一致
+        if len(all_predictions) != len(train_loader.dataset):
+            print(f"警告: 预测缓存大小({len(all_predictions)})与训练集大小({len(train_loader.dataset)})不匹配，重新初始化")
+            all_predictions = torch.zeros(len(train_loader.dataset), num_classes)
+    else:
+        # 非PSKD模式下不使用预测缓存
+        print("[!] 非PSKD模式，不使用预测缓存")
     
     # 获取类别数量，用于索引检查
     num_classes = len(train_loader.dataset.classes)
